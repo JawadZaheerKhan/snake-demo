@@ -17,7 +17,14 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   }
   h1 { margin: 0 0 8px; }
-  .score { margin-bottom: 12px; font-size: 18px; opacity: 0.85; }
+  .hud {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 12px;
+    font-size: 16px;
+    opacity: 0.9;
+  }
+  .hud span { font-weight: 600; color: #fef08a; }
   canvas {
     background: #1e293b;
     border: 2px solid #334155;
@@ -40,32 +47,81 @@
 </head>
 <body>
   <h1>🐍 Snake v2 by Talha</h1>
-  <div class="score">Score: <span id="score">0</span></div>
+  <div class="hud">
+    <div>Level: <span id="level">1</span></div>
+    <div>Score: <span id="score">0</span></div>
+    <div>Goal: <span id="goal">5</span></div>
+  </div>
   <canvas id="game" width="400" height="400"></canvas>
-  <div class="hint">Use arrow keys or WASD to move</div>
+  <div class="hint">Arrows / WASD to move • Eat food to level up • Avoid walls, obstacles & the red snake</div>
   <button id="restart">Restart</button>
 
 <script>
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const scoreEl = document.getElementById('score');
+  const levelEl = document.getElementById('level');
+  const goalEl = document.getElementById('goal');
   const restartBtn = document.getElementById('restart');
 
   const GRID = 20;
   const TILES = canvas.width / GRID;
 
-  let snake, dir, nextDir, food, score, gameOver, tickHandle;
+  const LEVELS = [
+    { goal: 5, speed: 110, obstacles: false, enemy: false },
+    { goal: 10, speed: 95, obstacles: true, enemy: false },
+    { goal: 999, speed: 85, obstacles: true, enemy: true },
+  ];
+
+  let snake, dir, nextDir, food, score, levelIdx, levelScore, gameOver, won;
+  let obstacles, enemy, enemyDir, tickHandle, frame;
 
   function reset() {
-    snake = [{ x: 10, y: 10 }];
+    levelIdx = 0;
+    score = 0;
+    startLevel();
+  }
+
+  function startLevel() {
+    const lvl = LEVELS[levelIdx];
+    snake = [{ x: 5, y: 10 }, { x: 4, y: 10 }, { x: 3, y: 10 }];
     dir = { x: 1, y: 0 };
     nextDir = dir;
-    score = 0;
+    levelScore = 0;
     gameOver = false;
+    won = false;
+    frame = 0;
+    obstacles = lvl.obstacles ? buildObstacles() : [];
+    enemy = lvl.enemy ? buildEnemy() : null;
+    enemyDir = { x: -1, y: 0 };
     placeFood();
+    levelEl.textContent = levelIdx + 1;
+    goalEl.textContent = lvl.goal;
     scoreEl.textContent = score;
     if (tickHandle) clearInterval(tickHandle);
-    tickHandle = setInterval(tick, 100);
+    tickHandle = setInterval(tick, lvl.speed);
+  }
+
+  function buildObstacles() {
+    const obs = [];
+    for (let i = 5; i < 15; i++) obs.push({ x: i, y: 6 });
+    for (let i = 5; i < 15; i++) obs.push({ x: i, y: 13 });
+    obs.push({ x: 2, y: 2 }, { x: 17, y: 2 }, { x: 2, y: 17 }, { x: 17, y: 17 });
+    return obs;
+  }
+
+  function buildEnemy() {
+    const body = [];
+    for (let i = 0; i < 5; i++) body.push({ x: 18 - i, y: 2 });
+    return body;
+  }
+
+  function isBlocked(p, includeSelf = true) {
+    if (p.x < 0 || p.x >= TILES || p.y < 0 || p.y >= TILES) return true;
+    if (includeSelf && snake.some(s => s.x === p.x && s.y === p.y)) return true;
+    if (obstacles.some(o => o.x === p.x && o.y === p.y)) return true;
+    if (enemy && enemy.some(e => e.x === p.x && e.y === p.y)) return true;
+    return false;
   }
 
   function placeFood() {
@@ -74,22 +130,47 @@
         x: Math.floor(Math.random() * TILES),
         y: Math.floor(Math.random() * TILES),
       };
-      if (!snake.some(s => s.x === f.x && s.y === f.y)) {
-        food = f;
-        return;
-      }
+      if (!isBlocked(f)) { food = f; return; }
     }
   }
 
+  function moveEnemy() {
+    if (!enemy) return;
+    const head = enemy[0];
+    const dx = Math.sign(snake[0].x - head.x);
+    const dy = Math.sign(snake[0].y - head.y);
+    const options = [];
+    if (dx !== 0) options.push({ x: dx, y: 0 });
+    if (dy !== 0) options.push({ x: 0, y: dy });
+    options.push({ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 });
+
+    let chosen = null;
+    for (const o of options) {
+      const np = { x: head.x + o.x, y: head.y + o.y };
+      if (np.x < 0 || np.x >= TILES || np.y < 0 || np.y >= TILES) continue;
+      if (obstacles.some(b => b.x === np.x && b.y === np.y)) continue;
+      if (enemy.some(b => b.x === np.x && b.y === np.y)) continue;
+      chosen = o;
+      break;
+    }
+    if (!chosen) return;
+    const newHead = { x: head.x + chosen.x, y: head.y + chosen.y };
+    enemy.unshift(newHead);
+    enemy.pop();
+  }
+
   function tick() {
-    if (gameOver) return;
+    if (gameOver || won) return;
+    frame++;
     dir = nextDir;
     const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
 
     if (
       head.x < 0 || head.x >= TILES ||
       head.y < 0 || head.y >= TILES ||
-      snake.some(s => s.x === head.x && s.y === head.y)
+      snake.some(s => s.x === head.x && s.y === head.y) ||
+      obstacles.some(o => o.x === head.x && o.y === head.y) ||
+      (enemy && enemy.some(e => e.x === head.x && e.y === head.y))
     ) {
       gameOver = true;
       draw();
@@ -99,36 +180,154 @@
     snake.unshift(head);
     if (head.x === food.x && head.y === food.y) {
       score++;
+      levelScore++;
       scoreEl.textContent = score;
+      if (levelScore >= LEVELS[levelIdx].goal) {
+        if (levelIdx < LEVELS.length - 1) {
+          levelIdx++;
+          setTimeout(startLevel, 400);
+          won = true;
+          drawBanner('Level Up!');
+          return;
+        }
+      }
       placeFood();
     } else {
       snake.pop();
     }
+
+    if (enemy && frame % 2 === 0) moveEnemy();
     draw();
+  }
+
+  function drawApple(gx, gy) {
+    const cx = gx * GRID + GRID / 2;
+    const cy = gy * GRID + GRID / 2;
+    const r = GRID / 2 - 2;
+
+    // body
+    ctx.fillStyle = '#dc2626';
+    ctx.beginPath();
+    ctx.arc(cx - 2, cy + 1, r, 0, Math.PI * 2);
+    ctx.arc(cx + 2, cy + 1, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // shine
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.beginPath();
+    ctx.arc(cx - 3, cy - 2, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // stem
+    ctx.strokeStyle = '#78350f';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r + 1);
+    ctx.lineTo(cx + 1, cy - r - 2);
+    ctx.stroke();
+
+    // leaf
+    ctx.fillStyle = '#16a34a';
+    ctx.beginPath();
+    ctx.ellipse(cx + 4, cy - r - 1, 3, 1.6, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawCell(x, y, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x * GRID, y * GRID, GRID - 1, GRID - 1);
+  }
+
+  function drawHead(seg, dir, faceColor) {
+    const px = seg.x * GRID;
+    const py = seg.y * GRID;
+    const size = GRID - 1;
+    ctx.fillStyle = faceColor;
+    ctx.beginPath();
+    ctx.roundRect(px, py, size, size, 6);
+    ctx.fill();
+
+    // eyes
+    const eyeOffsets = (() => {
+      if (dir.x === 1) return [[14, 5], [14, 13]];
+      if (dir.x === -1) return [[3, 5], [3, 13]];
+      if (dir.y === 1) return [[5, 14], [13, 14]];
+      return [[5, 3], [13, 3]];
+    })();
+    ctx.fillStyle = '#fff';
+    eyeOffsets.forEach(([ex, ey]) => {
+      ctx.beginPath();
+      ctx.arc(px + ex, py + ey, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.fillStyle = '#0f172a';
+    eyeOffsets.forEach(([ex, ey]) => {
+      ctx.beginPath();
+      ctx.arc(px + ex + dir.x * 0.8, py + ey + dir.y * 0.8, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // tongue (only player)
+    if (faceColor === '#22c55e') {
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      const cx = px + size / 2;
+      const cy = py + size / 2;
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + dir.x * 12, cy + dir.y * 12);
+      ctx.stroke();
+    }
   }
 
   function draw() {
     ctx.fillStyle = '#1e293b';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    ctx.fillStyle = '#ef4444';
-    ctx.fillRect(food.x * GRID, food.y * GRID, GRID - 1, GRID - 1);
+    obstacles.forEach(o => drawCell(o.x, o.y, '#64748b'));
+
+    drawApple(food.x, food.y);
+
+    if (enemy) {
+      enemy.forEach((s, i) => {
+        if (i === 0) drawHead(s, enemyDir, '#dc2626');
+        else drawCell(s.x, s.y, '#991b1b');
+      });
+    }
 
     snake.forEach((s, i) => {
-      ctx.fillStyle = i === 0 ? '#22c55e' : '#16a34a';
-      ctx.fillRect(s.x * GRID, s.y * GRID, GRID - 1, GRID - 1);
+      if (i === 0) drawHead(s, dir, '#22c55e');
+      else drawCell(s.x, s.y, '#16a34a');
     });
 
-    if (gameOver) {
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 28px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2);
-      ctx.font = '16px sans-serif';
+    if (gameOver) drawBanner('Game Over');
+  }
+
+  function drawBanner(text) {
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 32px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+    if (text === 'Game Over') {
+      ctx.font = '15px sans-serif';
       ctx.fillText('Press Restart to play again', canvas.width / 2, canvas.height / 2 + 30);
     }
+  }
+
+  // roundRect polyfill for older browsers
+  if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+      this.beginPath();
+      this.moveTo(x + r, y);
+      this.arcTo(x + w, y, x + w, y + h, r);
+      this.arcTo(x + w, y + h, x, y + h, r);
+      this.arcTo(x, y + h, x, y, r);
+      this.arcTo(x, y, x + w, y, r);
+      this.closePath();
+      return this;
+    };
   }
 
   document.addEventListener('keydown', (e) => {
